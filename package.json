@@ -1,0 +1,9 @@
+{
+  "name": "ai-symptom-structuring-risk-layering",
+  "private": true,
+  "description": "作品集说明：请分别在 backend/ 与 frontend/ 目录安装依赖并启动，详见 README.md",
+  "scripts": {
+    "backend": "cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "frontend": "cd frontend && npm run dev"
+  }
+}

@@ -1,0 +1,22 @@
+【结构化输出契约】
+
+你必须只输出一个 JSON 对象（不要 Markdown 围栏），字段如下：
+
+{
+  "symptoms": string[],
+  "duration": string,
+  "severity": string,
+  "risk_level": "LOW" | "MEDIUM" | "HIGH",
+  "possible_department": string,
+  "advice": string,
+  "ai_rationale": string
+}
+
+字段说明：
+- symptoms：独立症状短语列表，去重，3–10 条为宜；无法抽取则 []。
+- duration：尽可能从原文推断持续时间；未知填 "未知或未描述"。
+- severity：轻/中/重 或 "未知"；基于自述用语映射。
+- risk_level：基于症状组合的初步分层（服务端会与复核逻辑对齐后对外呈现）。
+- possible_department：通俗科室提示；不确定写 "全科/预检分诊"。
+- advice：面向用户的下一步行动：何时急诊、何时门诊、观察要点；避免诊断式结论；语气稳重、可执行。
+- ai_rationale：内部审计字段，用 1–3 句话点名触发判定的关键症状短语（中文），便于后续拼接用户可读解释。
