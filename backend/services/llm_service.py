@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from anthropic import Anthropic
 
 from config import get_settings
-from services.risk_engine import build_rule_first_explainability
+from services.risk_engine import build_rule_first_explainability, build_advice_text
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
@@ -109,28 +109,48 @@ def call_claude_structured(
 def merge_llm_with_rules(
     llm: Dict[str, Any],
     risk_level: str,
+    risk_score: int,
     rule_triggered: List[str],
     hints_zh: List[str],
     user_input: str,
 ) -> Dict[str, Any]:
-    """合并 LLM 输出与规则引擎结论；强制 advice 满足高危话术。"""
-    advice = str(llm.get("advice", "")).strip()
-    if risk_level == "HIGH":
-        must = ("立即就医", "拨打急救电话", "急救电话", "急诊")
-        if not any(k in advice for k in must):
-            advice = "请立即就医或拨打急救电话。" + advice
+    """
+    合并 LLM 输出与规则引擎结论。
+    规则引擎结果优先，LLM仅补充描述性内容。
+    强制 advice 满足高危/急症话术要求。
+    """
+    # 建议文本：优先使用规则引擎生成的标准建议
+    advice_from_rules = build_advice_text(risk_level, hints_zh)
+    advice_from_llm = str(llm.get("advice", "")).strip()
+    
+    # 对于EMERGENCY和HIGH，使用规则引擎的标准建议确保安全
+    if risk_level in ("EMERGENCY", "HIGH"):
+        advice = advice_from_rules
+        if advice_from_llm:
+            # LLM补充的建议作为附加信息
+            advice += f"\n\n补充说明：{advice_from_llm}"
+    else:
+        # MEDIUM和LOW可以使用LLM建议，但要检查合理性
+        advice = advice_from_llm if advice_from_llm else advice_from_rules
+        if risk_level == "MEDIUM":
+            must = ("就诊", "就医", "医生", "评估")
+            if not any(k in advice for k in must):
+                advice = advice_from_rules
 
-    explain = str(llm.get("explainability", "")).strip()
-    base = build_rule_first_explainability(
+    # Explainability：使用新的产品化解释
+    explain_from_llm = str(llm.get("explainability", "")).strip()
+    explainability = build_rule_first_explainability(
         risk_level=risk_level,
+        risk_score=risk_score,
         rule_triggered=rule_triggered,
         hints_zh=hints_zh,
         user_input_snippet=user_input[:120],
     )
-    if explain:
-        explainability = f"{base}\n{explain}"
-    else:
-        explainability = base
+    
+    # 如果LLM提供了额外解释，可以附加（但不影响主要解释）
+    if explain_from_llm and risk_level == "LOW":
+        # 只在LOW风险时附加LLM的解释
+        explainability += f"\n\nAI补充分析：{explain_from_llm}"
 
     return {
         "symptoms": llm.get("symptoms") or [],

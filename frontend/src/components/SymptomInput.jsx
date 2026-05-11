@@ -12,17 +12,18 @@ export default function SymptomInput({ value, onChange, onAnalyze, loading, disa
   const [history, setHistory] = useState([]);
 
   useEffect(() => {
-    setCharCount(value.length);
-    // 从 localStorage 加载历史记录
+    setCharCount((value ?? '').length);
+  }, [value]);
+
+  useEffect(() => {
+    // 从 localStorage 加载历史记录（仅首次挂载）
     try {
       const saved = localStorage.getItem('symptom_history');
-      if (saved) {
-        setHistory(JSON.parse(saved));
-      }
+      if (saved) setHistory(JSON.parse(saved));
     } catch (e) {
       console.error('加载历史失败:', e);
     }
-  }, [value]);
+  }, []);
 
   const handleChange = (e) => {
     const newValue = e.target.value;
@@ -74,8 +75,8 @@ export default function SymptomInput({ value, onChange, onAnalyze, loading, disa
           value={value}
           onChange={handleChange}
           disabled={loading || disabled}
-          placeholder="例如：我头疼三天了，昨晚发烧38.5度，有点恶心，吃不下东西..."
-          className="w-full h-48 p-4 border border-gray-300 rounded-xl resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:bg-gray-50 disabled:cursor-not-allowed text-gray-900"
+          placeholder={"描述您的不适，系统会帮您初步判断风险等级。\n例如：头疼三天，昨晚发烧38.5度，有点恶心"}
+          className="w-full h-48 p-4 border border-gray-300 rounded-xl resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition disabled:bg-gray-50 disabled:cursor-not-allowed text-gray-900 placeholder-gray-400"
           style={{ fontSize: '15px', lineHeight: '1.6' }}
         />
         

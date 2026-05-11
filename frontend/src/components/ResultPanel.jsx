@@ -33,6 +33,72 @@ export default function ResultPanel({ result, loading }) {
     );
   }
 
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 处理非医疗输入
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (result.input_type === 'non_medical_input') {
+    return (
+      <div className="bg-amber-50 rounded-xl border-2 border-amber-300 p-8 shadow-sm animate-fadeIn">
+        <div className="flex items-start gap-4">
+          <div className="flex-shrink-0">
+            <svg className="w-12 h-12 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-bold text-amber-900 mb-2">输入不符合症状描述</h3>
+            <p className="text-amber-800 leading-relaxed mb-4">
+              {result.input_validation_message}
+            </p>
+            <div className="bg-white rounded-lg p-4 border border-amber-200">
+              <p className="text-sm font-semibold text-gray-900 mb-2">请输入与健康相关的症状描述，例如：</p>
+              <ul className="text-sm text-gray-700 space-y-1.5">
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 font-bold">•</span>
+                  <span>身体不适部位（如：头痛、胸痛、腹痛等）</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 font-bold">•</span>
+                  <span>症状持续时间（如：三天、一周等）</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 font-bold">•</span>
+                  <span>严重程度（如：轻微、中等、严重等）</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-500 font-bold">•</span>
+                  <span>伴随症状（如：发烧、恶心、头晕等）</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 处理信息不足的症状输入
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (result.input_type === 'insufficient_symptom') {
+    return (
+      <div className="bg-blue-50 rounded-xl border-2 border-blue-300 p-5 shadow-sm animate-fadeIn">
+        <div className="flex items-start gap-3">
+          <svg className="w-9 h-9 text-blue-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div>
+            <h3 className="font-bold text-blue-900 mb-1">需要补充信息</h3>
+            <p className="text-sm text-blue-800 leading-relaxed">
+              {result.input_validation_message || '您的描述信息不足，请通过下方追问卡片补充详情，系统将重新评估风险。'}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const symptoms = result.structured?.symptoms || [];
   const hasSymptoms = symptoms.length > 0 && symptoms[0] !== '待详细分析';
 

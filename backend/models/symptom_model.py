@@ -22,7 +22,8 @@ class AnalyzeResponse(BaseModel):
     symptoms: List[str] = Field(default_factory=list)
     duration: str = ""
     severity: str = ""
-    risk_level: str = "LOW"  # LOW | MEDIUM | HIGH
+    risk_level: str = "LOW"  # LOW | MEDIUM | HIGH | EMERGENCY
+    risk_score: int = Field(default=10, ge=0, le=100, description="风险分数 0-100")
     possible_department: str = ""
     advice: str = ""
     ai_rationale: str = ""

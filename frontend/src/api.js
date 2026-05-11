@@ -2,7 +2,10 @@
  * API 调用封装 - 商业级标准
  */
 
-const API_BASE = '/api';
+// 本地开发：VITE_API_BASE_URL 为空，使用 Vite proxy（/api → localhost:8000）
+// 生产部署：在 Vercel 环境变量中设置 VITE_API_BASE_URL=https://your-backend.railway.app
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const API_BASE = `${BASE_URL}/api`;
 
 /**
  * 分析症状

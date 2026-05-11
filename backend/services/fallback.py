@@ -8,7 +8,7 @@ import re
 from typing import List
 
 from models.symptom_model import AnalyzeResponse
-from services.risk_engine import build_rule_first_explainability
+from services.risk_engine import build_rule_first_explainability, build_advice_text
 
 # 常见症状词根，用于无 LLM 时的浅层抽取（演示用）
 _SYMPTOM_LEXICON = (
@@ -53,54 +53,54 @@ def extract_symptoms_heuristic(user_input: str, max_n: int = 12) -> List[str]:
 
 
 def default_department(risk_level: str) -> str:
+    """根据风险等级推荐科室。"""
+    if risk_level == "EMERGENCY":
+        return "急诊 / 拨打120"
     if risk_level == "HIGH":
-        return "急诊 / 胸痛中心"
+        return "急诊 / 专科急诊"
     if risk_level == "MEDIUM":
         return "内科 / 全科"
     return "全科 / 保健门诊"
 
 
-def default_advice(risk_level: str) -> str:
-    """高风险必须包含就医与急救提示。"""
-    if risk_level == "HIGH":
-        return (
-            "请立即就医或拨打急救电话；在等待救助期间避免剧烈活动，勿自行驾车。"
-            "若出现胸痛、呼吸困难或意识异常加重，务必急诊处理。"
-        )
-    if risk_level == "MEDIUM":
-        return (
-            "建议今日或短期内线下就诊，监测体温与症状变化；避免自行联合用药。"
-            "若加重请及时急诊。"
-        )
-    return "建议留意症状变化，规律作息与补水；若持续或加重请预约门诊。"
-
-
 def build_fallback_response(
     user_input: str,
     risk_level: str,
+    risk_score: int,
     rule_triggered: List[str],
     hints_zh: List[str],
     reason: str = "",
 ) -> AnalyzeResponse:
-    """组装 fallback 响应（fallback_used=True）。"""
+    """
+    组装 fallback 响应（fallback_used=True）。
+    即使LLM不可用，也能通过规则引擎正确识别高危场景。
+    """
     symptoms = extract_symptoms_heuristic(user_input)
+    
+    # 使用新的产品化 explainability
     explain = build_rule_first_explainability(
         risk_level=risk_level,
+        risk_score=risk_score,
         rule_triggered=rule_triggered,
         hints_zh=hints_zh,
         user_input_snippet=user_input[:120],
     )
+    
     if reason:
-        explain = f"{explain}（说明：{reason}）"
+        explain = f"{explain}\n\n（系统说明：{reason}）"
+
+    # 使用新的建议生成逻辑
+    advice = build_advice_text(risk_level, hints_zh)
 
     return AnalyzeResponse(
         symptoms=symptoms if symptoms else ["待结构化补充"],
         duration=extract_duration_snippet(user_input),
-        severity="中等" if risk_level == "MEDIUM" else ("较重" if risk_level == "HIGH" else "较轻"),
+        severity="紧急" if risk_level == "EMERGENCY" else ("较重" if risk_level == "HIGH" else ("中等" if risk_level == "MEDIUM" else "较轻")),
         risk_level=risk_level,
+        risk_score=risk_score,
         possible_department=default_department(risk_level),
-        advice=default_advice(risk_level),
-        ai_rationale=f"当前无法调用大模型深化推理；分层完全依据规则引擎结果。触发规则：{', '.join(rule_triggered) if rule_triggered else '无'}。",
+        advice=advice,
+        ai_rationale=f"当前无法调用大模型进行深度分析，风险评估完全基于规则引擎。触发规则：{', '.join(rule_triggered) if rule_triggered else '无'}。",
         rule_triggered=list(rule_triggered),
         explainability=explain,
         fallback_used=True,

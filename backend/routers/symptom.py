@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from models.symptom_model import AnalyzeRequest, AnalyzeResponse
 from services.fallback import build_fallback_response
 from services.llm_service import call_claude_structured, merge_llm_with_rules
-from services.risk_engine import evaluate_rules
+from services.risk_engine import evaluate_rules, build_advice_text
 
 router = APIRouter(tags=["symptom"])
 
@@ -27,6 +27,7 @@ async def analyze_symptoms(body: AnalyzeRequest):
             fb = build_fallback_response(
                 "",
                 "LOW",
+                0,
                 [],
                 [],
                 reason="未填写症状内容",
@@ -35,7 +36,8 @@ async def analyze_symptoms(body: AnalyzeRequest):
             fb.explainability = "尚未接收到有效文本，无法触发规则与模型。"
             return JSONResponse(status_code=200, content=fb.model_dump())
 
-        risk_level, rule_triggered, hints = evaluate_rules(text)
+        # 规则引擎评估（现在返回4个值包括risk_score）
+        risk_level, risk_score, rule_triggered, hints = evaluate_rules(text)
 
         llm_json, err = call_claude_structured(text, risk_level, rule_triggered)
 
@@ -43,6 +45,7 @@ async def analyze_symptoms(body: AnalyzeRequest):
             merged = merge_llm_with_rules(
                 llm_json,
                 risk_level=risk_level,
+                risk_score=risk_score,
                 rule_triggered=rule_triggered,
                 hints_zh=hints,
                 user_input=text,
@@ -58,6 +61,7 @@ async def analyze_symptoms(body: AnalyzeRequest):
                 duration=str(merged.get("duration", "未知或未描述")),
                 severity=str(merged.get("severity", "未知")),
                 risk_level=risk_level,
+                risk_score=risk_score,
                 possible_department=str(merged.get("possible_department", "内科 / 全科")),
                 advice=str(merged.get("advice", "")),
                 ai_rationale=str(merged.get("ai_rationale", "")),
@@ -66,9 +70,11 @@ async def analyze_symptoms(body: AnalyzeRequest):
                 fallback_used=False,
             )
 
+        # LLM失败，使用fallback
         fb = build_fallback_response(
             text,
             risk_level,
+            risk_score,
             rule_triggered,
             hints,
             reason=err or "模型不可用",
@@ -79,6 +85,7 @@ async def analyze_symptoms(body: AnalyzeRequest):
         fb = build_fallback_response(
             getattr(body, "user_input", "") or "",
             "MEDIUM",
+            55,
             [],
             [],
             reason=f"系统兜底：{exc!s}",

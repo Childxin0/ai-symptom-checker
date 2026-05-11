@@ -13,6 +13,8 @@ from core.risk_engine import get_risk_engine
 from core.session_manager import get_session_manager
 from core.fallback import create_fallback_structured, create_fallback_analysis, create_safe_fallback_result
 from core.config import get_settings
+from core.input_validator import validate_input
+from core.text_preprocessor import get_negated_terms, preprocess_for_matching
 
 router = APIRouter()
 
@@ -30,19 +32,112 @@ async def analyze_symptoms(request: AnalyzeRequest):
         if not user_input:
             raise HTTPException(status_code=400, detail="症状描述不能为空")
         
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 输入意图识别：过滤非症状文本
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        input_type, validation_message = await validate_input(user_input)
+        
+        if input_type == "non_medical_input":
+            # 非医疗输入：不进行分析，直接返回提示
+            processing_time = int((time.time() - start_time) * 1000)
+            result = AnalysisResult(
+                input_type=input_type,
+                input_validation_message=validation_message,
+                structured=None,
+                risk=None,
+                advice="",
+                rationale="",
+                explainability="",
+                recommended_department="",
+                urgency_timeline="",
+                processing_time_ms=processing_time,
+                llm_used=False,
+            )
+            if request.session_id:
+                result.session_id = request.session_id
+            return result
+        
+        elif input_type == "insufficient_symptom":
+            # 信息不足：生成追问
+            processing_time = int((time.time() - start_time) * 1000)
+            
+            # 生成基础追问问题（附带 question_type 决定前端按钮样式）
+            from core.models import FollowupQuestion
+            followup_questions = [
+                FollowupQuestion(
+                    question="请描述具体的不适部位（如：头部、胸部、腹部等）",
+                    category="location",
+                    question_type="location",
+                ),
+                FollowupQuestion(
+                    question="症状持续了多久？",
+                    category="time",
+                    question_type="duration",
+                ),
+                FollowupQuestion(
+                    question="症状的严重程度如何？",
+                    category="severity",
+                    question_type="severity",
+                ),
+                FollowupQuestion(
+                    question="是否有其他伴随症状？（如：发热、恶心、头晕等）",
+                    category="accompanying",
+                    question_type="yn",
+                ),
+            ]
+            
+            result = AnalysisResult(
+                input_type=input_type,
+                input_validation_message=validation_message,
+                structured=None,
+                risk=None,
+                advice="",
+                rationale="",
+                explainability="",
+                recommended_department="",
+                urgency_timeline="",
+                needs_followup=True,
+                followup_questions=followup_questions,
+                processing_time_ms=processing_time,
+                llm_used=False,
+            )
+            if request.session_id:
+                result.session_id = request.session_id
+            return result
+        
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 有效症状输入：进入完整分析流程
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        
         llm_service = get_llm_service()
         risk_engine = get_risk_engine()
         session_manager = get_session_manager()
         
+        # 预计算：预处理后的文本（否定句已过滤），供 fallback 使用
+        preprocessed_input = preprocess_for_matching(user_input)
+
         # 第一阶段：症状结构化
         structured, error = await llm_service.structure_symptoms(user_input)
         llm_used = True
-        
+
         if not structured:
-            # Layer 1 降级：LLM失败，使用关键词提取
-            structured = create_fallback_structured(user_input)
+            # Layer 1 降级：LLM失败，用预处理后的文本提取关键词（否定词已移除）
+            structured = create_fallback_structured(preprocessed_input)
             llm_used = False
-        
+        else:
+            # LLM 路径：对 LLM 结果做否定句后处理（防止 LLM 偶发错误提取被否定症状）
+            negated = get_negated_terms(user_input)
+            if negated:
+                def _is_negated(symptom_str: str) -> bool:
+                    s = symptom_str.lower()
+                    return any(neg in s for neg in negated)
+                if structured.symptoms:
+                    structured.symptoms = [s for s in structured.symptoms if not _is_negated(s)]
+                if structured.accompanying_symptoms:
+                    structured.accompanying_symptoms = [
+                        s for s in structured.accompanying_symptoms if not _is_negated(s)
+                    ]
+
         # 规则引擎评估（规则优先）
         risk = risk_engine.evaluate(user_input, structured)
         
@@ -68,22 +163,29 @@ async def analyze_symptoms(request: AnalyzeRequest):
             needs_followup = len(followup_questions) > 0
         
         # 构建结果
-        result = AnalysisResult(
-            session_id=request.session_id or None,  # 新会话会自动生成
-            structured=structured,
-            risk=risk,
-            advice=analysis["advice"],
-            rationale=analysis["rationale"],
-            explainability=analysis["explainability"],
-            recommended_department=analysis["recommended_department"],
-            urgency_timeline=analysis["urgency_timeline"],
-            needs_followup=needs_followup,
-            followup_questions=followup_questions,
-            followup_round=0,
-            processing_time_ms=int((time.time() - start_time) * 1000),
-            llm_used=llm_used,
-            fallback_reason=None if llm_used else "LLM不可用或降级"
-        )
+        result_kwargs = {
+            "input_type": "valid_symptom",  # 已通过验证，是有效症状
+            "input_validation_message": "",
+            "structured": structured,
+            "risk": risk,
+            "advice": analysis["advice"],
+            "rationale": analysis["rationale"],
+            "explainability": analysis["explainability"],
+            "recommended_department": analysis["recommended_department"],
+            "urgency_timeline": analysis["urgency_timeline"],
+            "needs_followup": needs_followup,
+            "followup_questions": followup_questions,
+            "followup_round": 0,
+            "processing_time_ms": int((time.time() - start_time) * 1000),
+            "llm_used": llm_used,
+            "fallback_reason": None if llm_used else "LLM不可用或降级"
+        }
+        
+        # 如果提供了session_id，使用它；否则让模型自动生成
+        if request.session_id:
+            result_kwargs["session_id"] = request.session_id
+            
+        result = AnalysisResult(**result_kwargs)
         
         # 保存会话
         session_manager.create_session(result.session_id)

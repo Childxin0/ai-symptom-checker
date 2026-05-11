@@ -5,6 +5,16 @@
 import React from 'react';
 
 const RISK_STYLES = {
+  EMERGENCY: {
+    bg: 'bg-red-100',
+    border: 'border-red-600',
+    text: 'text-red-950',
+    badge: 'bg-red-600',
+    icon: 'text-red-700',
+    label: '⚠️ 紧急',
+    subtitle: '立即拨打120或前往急诊',
+    pulse: true
+  },
   HIGH: {
     bg: 'bg-red-50',
     border: 'border-red-500',
@@ -12,7 +22,7 @@ const RISK_STYLES = {
     badge: 'bg-red-500',
     icon: 'text-red-600',
     label: '高风险',
-    subtitle: '建议立即就医',
+    subtitle: '建议尽快就医',
     pulse: true
   },
   MEDIUM: {
@@ -22,7 +32,7 @@ const RISK_STYLES = {
     badge: 'bg-orange-500',
     icon: 'text-orange-600',
     label: '中风险',
-    subtitle: '建议尽快就医',
+    subtitle: '建议24-48小时内就诊',
     pulse: false
   },
   LOW: {
@@ -32,7 +42,7 @@ const RISK_STYLES = {
     badge: 'bg-green-500',
     icon: 'text-green-600',
     label: '低风险',
-    subtitle: '可观察，注意变化',
+    subtitle: '可观察，注意症状变化',
     pulse: false
   }
 };
@@ -65,9 +75,22 @@ export default function RiskCard({ result, loading }) {
     );
   }
 
-  const riskLevel = result.risk?.level || 'LOW';
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // 关键修复：只在 valid_symptom 时显示风险卡
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (result.input_type !== 'valid_symptom') {
+    // 非医疗输入 或 信息不足：不显示风险卡
+    return null;
+  }
+
+  // 检查是否有有效的风险数据
+  if (!result.risk || !result.risk.level) {
+    return null;
+  }
+
+  const riskLevel = result.risk.level;
   const style = RISK_STYLES[riskLevel] || RISK_STYLES.LOW;
-  const score = result.risk?.score || 0;
+  const score = result.risk.score || 0;
 
   return (
     <div className={`${style.bg} rounded-2xl border-2 ${style.border} p-8 shadow-lg ${style.pulse ? 'animate-danger-pulse' : ''} animate-fadeIn`}>
@@ -86,6 +109,11 @@ export default function RiskCard({ result, loading }) {
       {/* 风险等级 */}
       <div className="flex items-center gap-4 mb-4">
         <div className={`w-16 h-16 rounded-2xl ${style.bg} ${style.border} border-2 flex items-center justify-center`}>
+          {riskLevel === 'EMERGENCY' && (
+            <svg className={`w-8 h-8 ${style.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          )}
           {riskLevel === 'HIGH' && (
             <svg className={`w-8 h-8 ${style.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />

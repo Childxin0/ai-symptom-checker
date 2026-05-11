@@ -42,7 +42,7 @@ class StructuredSymptoms(BaseModel):
 
 class RiskAssessment(BaseModel):
     """风险评估结果"""
-    level: Literal["LOW", "MEDIUM", "HIGH"] = Field("LOW", description="风险等级")
+    level: Literal["LOW", "MEDIUM", "HIGH", "EMERGENCY"] = Field("LOW", description="风险等级")
     score: int = Field(0, ge=0, le=100, description="风险分数（0-100）")
     triggered_rules: List[str] = Field(default_factory=list, description="触发的规则ID列表")
     rule_explanations: List[str] = Field(default_factory=list, description="规则解释（中文）")
@@ -53,6 +53,14 @@ class FollowupQuestion(BaseModel):
     question: str = Field(..., description="追问问题文本")
     category: str = Field(..., description="问题分类：time/severity/location/accompanying")
     options: Optional[List[str]] = Field(None, description="选项列表（如适用）")
+    question_type: Literal["yn", "duration", "severity", "location", "open"] = Field(
+        "yn",
+        description=(
+            "问题类型，决定快捷按钮样式："
+            "yn=是/否/不确定, duration=时间选项, severity=严重程度,"
+            "location=部位选项, open=纯文本输入"
+        ),
+    )
 
 
 class AnalysisResult(BaseModel):
@@ -61,11 +69,18 @@ class AnalysisResult(BaseModel):
     session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = Field(default_factory=datetime.now)
     
+    # 输入验证
+    input_type: Literal["valid_symptom", "insufficient_symptom", "non_medical_input"] = Field(
+        "valid_symptom", 
+        description="输入类型：valid_symptom=有效症状，insufficient_symptom=信息不足，non_medical_input=非医疗输入"
+    )
+    input_validation_message: str = Field("", description="输入验证提示信息")
+    
     # 结构化症状
-    structured: StructuredSymptoms
+    structured: Optional[StructuredSymptoms] = Field(None, description="症状结构化结果（仅当input_type=valid_symptom时有值）")
     
     # 风险评估
-    risk: RiskAssessment
+    risk: Optional[RiskAssessment] = Field(None, description="风险评估结果（仅当input_type=valid_symptom时有值）")
     
     # AI 生成内容
     advice: str = Field("", description="就诊建议（自然语言）")
