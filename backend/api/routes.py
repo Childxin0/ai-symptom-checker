@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 import time
 import asyncio
+import os
 
 from core.models import AnalyzeRequest, FollowupRequest, AnalysisResult
 from core.llm_service import get_llm_service
@@ -17,6 +18,50 @@ from core.input_validator import validate_input
 from core.text_preprocessor import get_negated_terms, preprocess_for_matching
 
 router = APIRouter()
+
+
+def _is_mild_cold_no_fever_case(user_input: str) -> bool:
+    """
+    轻症上呼吸道 + 明确无发热的硬性保护条件。
+    满足时最终输出必须强制 LOW，避免被后续链路误抬高。
+    """
+    text = user_input.lower()
+
+    mild_terms = ("流鼻涕", "鼻涕", "鼻塞", "打喷嚏", "轻微咳嗽", "有点咳")
+    no_fever_terms = ("体温正常", "没有发烧", "不发烧", "无发热", "没发烧", "没有发热", "不发热")
+    high_risk_terms = (
+        "呼吸困难", "胸痛", "意识不清", "高热", "持续高烧", "抽搐",
+        "过敏性休克", "剧烈头痛", "肢体无力", "口齿不清", "喘不上气",
+        "出冷汗", "压榨感", "晕倒", "昏迷"
+    )
+
+    has_mild = any(term in text for term in mild_terms)
+    has_no_fever = any(term in text for term in no_fever_terms)
+    has_high_risk = any(term in text for term in high_risk_terms)
+
+    return has_mild and has_no_fever and not has_high_risk
+
+
+def _force_low_output(risk, analysis: dict) -> tuple:
+    """
+    最终输出硬性保护：强制 LOW + score<=25 + 可观察 + 非急诊科。
+    """
+    risk.level = "LOW"
+    risk.score = min(risk.score, 25)
+    if not risk.triggered_rules:
+        risk.triggered_rules = ["cold_no_fever_guard"]
+
+    analysis["urgency_timeline"] = "可观察"
+    analysis["recommended_department"] = "全科 / 呼吸科"
+    return risk, analysis
+
+
+def _safe_log(obj) -> str:
+    """
+    避免 Windows 控制台编码导致日志打印异常（如 emoji）。
+    """
+    text = repr(obj)
+    return text.encode("ascii", errors="backslashreplace").decode("ascii")
 
 
 @router.post("/analyze", response_model=AnalysisResult)
@@ -31,6 +76,7 @@ async def analyze_symptoms(request: AnalyzeRequest):
         user_input = request.user_input.strip()
         if not user_input:
             raise HTTPException(status_code=400, detail="症状描述不能为空")
+        print(f"[ANALYZE] input={user_input!r}")
         
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # 输入意图识别：过滤非症状文本
@@ -140,6 +186,10 @@ async def analyze_symptoms(request: AnalyzeRequest):
 
         # 规则引擎评估（规则优先）
         risk = risk_engine.evaluate(user_input, structured)
+        print(
+            f"[ANALYZE] risk_engine_initial level={risk.level} score={risk.score} "
+            f"matched_rules={risk.triggered_rules}"
+        )
         
         # 第二阶段：生成分析和建议
         if llm_used:
@@ -148,9 +198,21 @@ async def analyze_symptoms(request: AnalyzeRequest):
                 # Layer 2 降级：分析生成失败
                 analysis = create_fallback_analysis(risk.level, risk.triggered_rules)
                 llm_used = False
+                print(f"[ANALYZE] llm_analysis_failed fallback=True reason={error}")
         else:
             # 使用降级分析
             analysis = create_fallback_analysis(risk.level, risk.triggered_rules)
+            print("[ANALYZE] llm_structure_failed fallback=True")
+
+        print(f"[ANALYZE] llm_analysis_output={_safe_log(analysis)}")
+
+        # 最终硬性保护：轻症上呼吸道 + 明确无发热，禁止被后链路误判为高风险
+        if _is_mild_cold_no_fever_case(user_input):
+            risk, analysis = _force_low_output(risk, analysis)
+            print(
+                f"[ANALYZE] cold_guard_applied final level={risk.level} score={risk.score} "
+                f"urgency={analysis.get('urgency_timeline')} dept={analysis.get('recommended_department')}"
+            )
         
         # 生成追问（如果需要）
         needs_followup = False
@@ -186,6 +248,12 @@ async def analyze_symptoms(request: AnalyzeRequest):
             result_kwargs["session_id"] = request.session_id
             
         result = AnalysisResult(**result_kwargs)
+        print(
+            f"[ANALYZE] response_final level={result.risk.level if result.risk else None} "
+            f"score={result.risk.score if result.risk else None} "
+            f"urgency={result.urgency_timeline!r} dept={result.recommended_department!r} "
+            f"fallback={not llm_used}"
+        )
         
         # 保存会话
         session_manager.create_session(result.session_id)
@@ -378,6 +446,7 @@ async def health_check():
     ping = await _ping_llm()
     return {
         "status": "ok",
+        "runtime_commit": os.getenv("RAILWAY_GIT_COMMIT_SHA") or os.getenv("GIT_COMMIT_SHA") or "unknown",
         "llm_available": ping["status"] == "ok",
         "llm_base_url": settings.llm_base_url,
         "model": settings.llm_model,
