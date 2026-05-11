@@ -307,16 +307,91 @@ async def answer_followup(request: FollowupRequest):
         )
 
 
+async def _ping_llm() -> dict:
+    """
+    真实 ping 一次 LLM，返回结构化结果。
+    供 /health 和 /debug/llm-ping 共用。
+    """
+    import time
+    from openai import APIConnectionError, AuthenticationError, BadRequestError
+    from core.config import get_settings as _gs
+
+    settings = _gs()
+
+    if not settings.llm_api_key:
+        return {
+            "status": "error",
+            "error_type": "missing_key",
+            "message": "LLM_API_KEY 未配置",
+        }
+
+    from openai import OpenAI
+    client = OpenAI(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        timeout=10.0,  # ping 用短超时，避免 health 接口卡住
+    )
+
+    t0 = time.time()
+    try:
+        resp = await asyncio.to_thread(
+            lambda: client.chat.completions.create(
+                model=settings.llm_model,
+                messages=[{"role": "user", "content": "你好"}],
+                max_tokens=16,
+                temperature=0.0,
+            )
+        )
+        latency_ms = int((time.time() - t0) * 1000)
+        reply = resp.choices[0].message.content or ""
+        print(f"[LLM-ping] OK latency={latency_ms}ms reply={reply!r}")
+        return {
+            "status": "ok",
+            "response": reply,
+            "model": settings.llm_model,
+            "latency_ms": latency_ms,
+        }
+    except AuthenticationError as e:
+        msg = f"API Key 无效或已过期: {e}"
+        print(f"[LLM-ping] ERROR 401 {msg}")
+        return {"status": "error", "error_type": "401", "message": msg}
+    except APIConnectionError as e:
+        msg = f"无法连接到 {settings.llm_base_url}: {e}"
+        print(f"[LLM-ping] ERROR connection {msg}")
+        return {"status": "error", "error_type": "connection", "message": msg}
+    except BadRequestError as e:
+        msg = f"请求参数错误（检查 LLM_MODEL={settings.llm_model}）: {e}"
+        print(f"[LLM-ping] ERROR bad_request {msg}")
+        return {"status": "error", "error_type": "bad_request", "message": msg}
+    except Exception as e:
+        latency_ms = int((time.time() - t0) * 1000)
+        err_type = "timeout" if "timeout" in str(e).lower() or "timed out" in str(e).lower() else type(e).__name__
+        msg = str(e)
+        print(f"[LLM-ping] ERROR {err_type} {msg}")
+        return {"status": "error", "error_type": err_type, "message": msg}
+
+
 @router.get("/health")
 async def health_check():
-    """健康检查"""
+    """健康检查（含真实 LLM ping）"""
     settings = get_settings()
+    ping = await _ping_llm()
     return {
         "status": "ok",
-        "llm_available": bool(settings.llm_api_key),
+        "llm_available": ping["status"] == "ok",
         "llm_base_url": settings.llm_base_url,
         "model": settings.llm_model,
+        "llm_ping": ping,
     }
+
+
+@router.get("/debug/llm-ping")
+async def debug_llm_ping():
+    """
+    调试接口：真实调用 LLM 一次，返回详细结果。
+    仅用于调试，无需鉴权。
+    """
+    return await _ping_llm()
 
 
 # 完成
