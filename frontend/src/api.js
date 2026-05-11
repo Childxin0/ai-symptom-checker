@@ -7,6 +7,10 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 const API_BASE = `${BASE_URL}/api`;
 
+// 调试：打开浏览器控制台可看到实际请求地址
+console.log('[API] BASE_URL =', BASE_URL || '(empty → using Vite proxy)');
+console.log('[API] API_BASE =', API_BASE);
+
 /**
  * 分析症状
  */

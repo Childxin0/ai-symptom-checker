@@ -21,6 +21,8 @@ frontend/dist/
 # Environment variables
 .env
 *.env
+.env.local
+*.env.local
 !.env.example
 
 # IDE
