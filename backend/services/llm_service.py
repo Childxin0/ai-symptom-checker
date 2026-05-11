@@ -1,5 +1,6 @@
 """
-Claude API 调用与 Prompt 加载：在规则引擎给定的 risk_level 下补充结构化字段与 rationale。
+LLM 服务（services 层）- OpenAI-compatible API 调用
+规则引擎 + LLM 混合路径：在规则引擎给定的 risk_level 下补充结构化字段与 rationale。
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from anthropic import Anthropic
+from openai import OpenAI, APIConnectionError, AuthenticationError, BadRequestError
 
 from config import get_settings
 from services.risk_engine import build_rule_first_explainability, build_advice_text
@@ -31,7 +32,6 @@ def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
-        # 尝试截取第一个 { 到最后一个 }
         start, end = raw.find("{"), raw.rfind("}")
         if start >= 0 and end > start:
             try:
@@ -41,17 +41,19 @@ def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def call_claude_structured(
+def call_llm_structured(
     user_input: str,
     risk_level: str,
     rule_triggered: List[str],
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """
-    调用 Claude，返回 (parsed_json_or_none, error_message_or_none)。
+    调用 LLM（OpenAI-compatible），返回 (parsed_json_or_none, error_message_or_none)。
     """
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        return None, "未配置 ANTHROPIC_API_KEY"
+
+    if not settings.llm_api_key:
+        print("[LLM] LLM call failed: LLM_API_KEY 未配置")
+        return None, "未配置 LLM_API_KEY"
 
     system = _read_prompt("system_prompt.txt")
     structure_instr = _read_prompt("structure_prompt.txt")
@@ -83,25 +85,39 @@ def call_claude_structured(
 4. explainability 用自然中文解释为何是该等级，并与 rule_triggered 呼应。
 """
 
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = OpenAI(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        timeout=settings.llm_timeout,
+    )
+
     try:
-        msg = client.messages.create(
-            model=settings.anthropic_model,
+        response = client.chat.completions.create(
+            model=settings.llm_model,
             max_tokens=2048,
             temperature=0.2,
-            system=system,
-            messages=[{"role": "user", "content": user_block}],
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_block},
+            ],
         )
-    except Exception as e:  # noqa: BLE001 — 统一交由上层降级
+        text_out = response.choices[0].message.content or ""
+    except AuthenticationError as e:
+        print(f"[LLM] LLM call failed: API Key 无效或已过期 → {e}")
         return None, str(e)
-
-    text_out = ""
-    for block in msg.content:
-        if block.type == "text":
-            text_out += block.text
+    except APIConnectionError as e:
+        print(f"[LLM] LLM call failed: 无法连接到 {settings.llm_base_url}，请检查 LLM_BASE_URL → {e}")
+        return None, str(e)
+    except BadRequestError as e:
+        print(f"[LLM] LLM call failed: 请求参数错误，请检查 LLM_MODEL={settings.llm_model} → {e}")
+        return None, str(e)
+    except Exception as e:
+        print(f"[LLM] LLM call failed: {type(e).__name__}: {e}")
+        return None, str(e)
 
     parsed = _extract_json_object(text_out)
     if not parsed:
+        print(f"[LLM] LLM call failed: JSON 解析失败，原始输出: {text_out[:200]}")
         return None, "JSON 解析失败"
     return parsed, None
 
@@ -117,28 +133,21 @@ def merge_llm_with_rules(
     """
     合并 LLM 输出与规则引擎结论。
     规则引擎结果优先，LLM仅补充描述性内容。
-    强制 advice 满足高危/急症话术要求。
     """
-    # 建议文本：优先使用规则引擎生成的标准建议
     advice_from_rules = build_advice_text(risk_level, hints_zh)
     advice_from_llm = str(llm.get("advice", "")).strip()
-    
-    # 对于EMERGENCY和HIGH，使用规则引擎的标准建议确保安全
+
     if risk_level in ("EMERGENCY", "HIGH"):
         advice = advice_from_rules
         if advice_from_llm:
-            # LLM补充的建议作为附加信息
             advice += f"\n\n补充说明：{advice_from_llm}"
     else:
-        # MEDIUM和LOW可以使用LLM建议，但要检查合理性
         advice = advice_from_llm if advice_from_llm else advice_from_rules
         if risk_level == "MEDIUM":
             must = ("就诊", "就医", "医生", "评估")
             if not any(k in advice for k in must):
                 advice = advice_from_rules
 
-    # Explainability：使用新的产品化解释
-    explain_from_llm = str(llm.get("explainability", "")).strip()
     explainability = build_rule_first_explainability(
         risk_level=risk_level,
         risk_score=risk_score,
@@ -146,10 +155,9 @@ def merge_llm_with_rules(
         hints_zh=hints_zh,
         user_input_snippet=user_input[:120],
     )
-    
-    # 如果LLM提供了额外解释，可以附加（但不影响主要解释）
+
+    explain_from_llm = str(llm.get("explainability", "")).strip()
     if explain_from_llm and risk_level == "LOW":
-        # 只在LOW风险时附加LLM的解释
         explainability += f"\n\nAI补充分析：{explain_from_llm}"
 
     return {

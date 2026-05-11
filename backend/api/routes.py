@@ -313,8 +313,9 @@ async def health_check():
     settings = get_settings()
     return {
         "status": "ok",
-        "llm_available": bool(settings.anthropic_api_key),
-        "model": settings.anthropic_model
+        "llm_available": bool(settings.llm_api_key),
+        "llm_base_url": settings.llm_base_url,
+        "model": settings.llm_model,
     }
 
 
