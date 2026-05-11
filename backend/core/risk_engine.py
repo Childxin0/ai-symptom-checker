@@ -322,6 +322,22 @@ _REGEX_RULES: Tuple[Tuple[str, str, str, str, str], ...] = (
      r"(一天|每天)\s*(拉了?|腹泻|拉肚子)\s*(十|[5-9]|\d{2})\s*次"),
 )
 
+# 轻症上呼吸道关键词（流鼻涕/鼻塞类）
+_MILD_COLD_TERMS: Tuple[str, ...] = (
+    "流鼻涕", "鼻涕", "鼻塞", "打喷嚏", "轻微咳嗽", "有点咳", "嗓子痒"
+)
+
+# 明确“无发烧/体温正常”信号
+_NO_FEVER_TERMS: Tuple[str, ...] = (
+    "体温正常", "不发烧", "没有发烧", "没发烧", "无发烧", "未发烧",
+    "体温不高", "没有发热", "没发热", "无发热", "不发热",
+)
+
+# 仍需升级的肯定发热信号
+_POSITIVE_FEVER_TERMS: Tuple[str, ...] = (
+    "发烧", "发热", "高烧", "发高烧", "体温升高"
+)
+
 
 def _normalize(text: str) -> str:
     """标准化文本：小写、去除多余空格。"""
@@ -473,6 +489,42 @@ def evaluate_rules(user_input: str) -> Tuple[str, int, List[str], List[str]]:
             )
             if not has_danger_signal and not has_high_fever:
                 risk_level = "MEDIUM"
+    # ────────────────────────────────────────────────────────────────────
+
+    # ── 轻症感冒 / 否定发热保护逻辑 ─────────────────────────────────────
+    # 目标：
+    # 1) “流鼻涕/鼻塞”单独或仅伴轻微感冒症状时，风险上限为 LOW
+    # 2) “体温正常/没有发烧/不发烧”不应触发发热升级
+    raw_input = _normalize(user_input)
+    has_mild_cold_term = any(term in processed_input for term in _MILD_COLD_TERMS)
+    has_no_fever_signal = any(term in raw_input for term in _NO_FEVER_TERMS)
+    has_positive_fever = any(term in processed_input for term in _POSITIVE_FEVER_TERMS) or bool(
+        re.search(r"(3[8-9]|4[0-1])\.?\d*\s*[度℃]", processed_input)
+    )
+
+    # 明确无发热时，移除发热相关命中（防止被“烧/发热”词误触发）
+    if has_no_fever_signal:
+        fever_rule_ids = {"fever_medium", "high_fever_high", "fever_high_value", "fever_medium_value"}
+        unique_hits = [h for h in unique_hits if h.rule_id not in fever_rule_ids]
+        if unique_hits:
+            levels = [h.level for h in unique_hits]
+            risk_level = _max_level(*levels)
+            categories = {h.category for h in unique_hits}
+            has_multiple_categories = len(categories) > 1
+        else:
+            risk_level = "LOW"
+            has_multiple_categories = False
+
+    # 轻症上呼吸道且没有肯定发热时，强制上限 LOW
+    # 仅当不存在其他明显中高危信号时才生效，避免压制真实高危症状。
+    if has_mild_cold_term and not has_positive_fever:
+        has_non_cold_medium_or_higher = any(
+            h.level in ("MEDIUM", "HIGH", "EMERGENCY")
+            and h.rule_id not in {"fever_medium", "high_fever_high", "fever_high_value", "fever_medium_value"}
+            for h in unique_hits
+        )
+        if not has_non_cold_medium_or_higher:
+            risk_level = "LOW"
     # ────────────────────────────────────────────────────────────────────
 
     # 计算风险分数
