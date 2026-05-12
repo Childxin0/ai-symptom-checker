@@ -1,5 +1,13 @@
 # AI 症状结构化 + 风险分层系统
 
+*AI Symptom Structuring and Risk Stratification Demo for Portfolio*
+
+![Demo](https://img.shields.io/badge/Demo-Live-22c55e)
+![Frontend](https://img.shields.io/badge/Frontend-React%20%2B%20Vite-3b82f6)
+![Backend](https://img.shields.io/badge/Backend-FastAPI-10b981)
+![LLM](https://img.shields.io/badge/LLM-DeepSeek-f59e0b)
+![License](https://img.shields.io/badge/License-MIT-64748b)
+
 **在线演示：** [ai-symptom-checker-tau.vercel.app](https://ai-symptom-checker-tau.vercel.app)
 
 > 作品集项目 · AI 医疗 PM 方向 · MVP 级可交互演示
@@ -25,6 +33,7 @@
 - 在线 Demo：`https://ai-symptom-checker-tau.vercel.app`
 - 后端 API：`<待补充>`
 - GitHub：`<待补充>`
+- 30 秒演示脚本：[`DEMO_SCRIPT.md`](./DEMO_SCRIPT.md)
 
 ---
 
